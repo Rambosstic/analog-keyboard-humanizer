@@ -19,11 +19,11 @@ endif()
 # Tell tusb_xinput where TinyUSB lives
 set(TINYUSB_PATH ${PICO_SDK_PATH}/lib/tinyusb)
 
-# Add tusb_xinput submodule
-add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/lib/tusb_xinput xinput_host)
-
-# Add Pico PIO USB
+# Add Pico PIO USB first
 add_subdirectory(${PICO_PIO_USB_PATH} Pico-PIO-USB)
+
+# Add tusb_xinput
+add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/lib/tusb_xinput xinput_host)
 
 add_executable(analog_keyboard_humanizer
     src/main.c
@@ -34,6 +34,7 @@ add_executable(analog_keyboard_humanizer
 target_include_directories(analog_keyboard_humanizer PRIVATE
     src
     ${PICO_PIO_USB_PATH}/src
+    ${TINYUSB_PATH}/src
 )
 
 target_compile_definitions(analog_keyboard_humanizer PRIVATE
@@ -51,5 +52,8 @@ target_link_libraries(analog_keyboard_humanizer PRIVATE
     tinyusb_pico_pio_usb
     xinput_host
 )
+
+# Create alias so tusb_xinput can find tinyusb
+add_library(tinyusb ALIAS tinyusb_host)
 
 pico_add_extra_outputs(analog_keyboard_humanizer)
