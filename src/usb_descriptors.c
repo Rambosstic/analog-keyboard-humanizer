@@ -1,7 +1,7 @@
 #include "tusb.h"
 #include <string.h>
 
-// Device descriptor
+// Device descriptor - Corrected for XInput 8-byte Endpoint 0 and fresh PID
 static const uint8_t desc_device[] = {
     0x12,       // bLength
     0x01,       // bDescriptorType (Device)
@@ -9,9 +9,9 @@ static const uint8_t desc_device[] = {
     0xFF,       // bDeviceClass
     0xFF,       // bDeviceSubClass
     0xFF,       // bDeviceProtocol
-    0x40,       // bMaxPacketSize0 64
+    0x08,       // bMaxPacketSize0 (Changed to 8 to match official Xbox 360 Controller specs)
     0x5E, 0x04, // idVendor 0x045E (Microsoft)
-    0x8E, 0x02, // idProduct 0x028E (Xbox 360 Controller)
+    0x8F, 0x02, // idProduct 0x028F (Changed from 8E to 8F to force Windows to clear its old driver cache)
     0x14, 0x01, // bcdDevice 0x0114
     0x01,       // iManufacturer
     0x02,       // iProduct
