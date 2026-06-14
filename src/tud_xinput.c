@@ -3,7 +3,8 @@
 #include "tud_xinput.h"
 #include <string.h>
 
-#define ENDPOINT_SIZE 20
+// Corrected buffer size to 64 to fully safely handle audio and gamepad layout pipelines
+#define ENDPOINT_SIZE 64  
 
 static uint8_t endpoint_in  = 0xFF;
 static uint8_t endpoint_out = 0xFF;
