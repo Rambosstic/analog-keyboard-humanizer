@@ -17,7 +17,7 @@ extern "C" {
 #define CFG_TUD_MAX_SPEED     OPT_MODE_FULL_SPEED
 #define CFG_TUD_ENDPOINT0_SIZE 8
 
-// Disable all built-in classes so our custom XInput driver can handle the layout safely
+// Pure custom mode: disable all internal class drivers completely
 #define CFG_TUD_HID           0
 #define CFG_TUD_CDC           0
 #define CFG_TUD_MSC           0
@@ -25,9 +25,9 @@ extern "C" {
 #define CFG_TUD_AUDIO         0
 #define CFG_TUD_VIDEO         0
 #define CFG_TUD_DFU_RUNTIME   0
-#define CFG_TUD_VENDOR        1 // Turned OFF to stop Code 43 collisions
+#define CFG_TUD_VENDOR        0 // Set to 0 to give XInput full control over Interface 0
 
-// Host Configuration (Keep your keyboard input settings exactly as they were)
+// Host Configuration (Keeps your keyboard reading intact)
 #define CFG_TUH_ENABLED       1
 #define CFG_TUH_RPI_PIO_USB   1
 #define CFG_TUH_MAX_SPEED     OPT_MODE_DEFAULT_SPEED
