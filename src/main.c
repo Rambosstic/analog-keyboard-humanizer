@@ -5,7 +5,9 @@
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
 #include "hardware/gpio.h"
+#include "hardware/clocks.h" // FIX: Registers set_sys_clock_khz for the 120MHz timing boost
 
+#include "pio_usb.h"         // FIX: Registers pio_usb_configuration_t and PIO_USB_DEFAULT_CONFIG
 #include "tusb.h"
 #include "xinput_host.h"
 #include "tud_xinput.h"
