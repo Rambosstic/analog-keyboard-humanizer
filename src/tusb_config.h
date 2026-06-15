@@ -25,7 +25,7 @@ extern "C" {
 #define CFG_TUD_AUDIO         0
 #define CFG_TUD_VIDEO         0
 #define CFG_TUD_DFU_RUNTIME   0
-#define CFG_TUD_VENDOR        0 // Turned OFF to stop Code 43 collisions
+#define CFG_TUD_VENDOR        1 // Turned OFF to stop Code 43 collisions
 
 // Host Configuration (Keep your keyboard input settings exactly as they were)
 #define CFG_TUH_ENABLED       1
