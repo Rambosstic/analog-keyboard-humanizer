@@ -27,7 +27,6 @@ add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/lib/tusb_xinput xinput_host)
 
 add_executable(analog_keyboard_humanizer
     src/main.c
-    src/usb_descriptors.c
     src/humanizer.c
     src/tud_xinput.c
 )
