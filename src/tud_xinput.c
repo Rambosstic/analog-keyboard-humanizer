@@ -17,21 +17,29 @@ bool tud_in_config_mode(void) {
     return is_config_mode;
 }
 
-// Mode A: Pure Xbox 360 Controller
+// ====================================================================
+// 1. ISOLATED DEVICE DESCRIPTORS
+// ====================================================================
+
+// Mode A: Official Xbox 360 Controller (Endpoint 0: 8 Bytes)
 static const uint8_t desc_device_xinput[] = {
-    0x12, 0x01, 0x00, 0x02, 0xFF, 0xFF, 0xFF, 0x08,
+    0x12, 0x01, 0x00, 0x02, 0xFF, 0xFF, 0xFF, 0x08, // Max Packet Size 0 = 8
     0x5E, 0x04, 0x8E, 0x02, 0x14, 0x01, 0x01, 0x02, 0x03, 0x01
 };
 
-// Mode B: Web App Configuration Serial Port (CDC)
+// Mode B: Raspberry Pi CDC Serial Port (Endpoint 0: 8 Bytes - MATCHES CONFIG)
 static const uint8_t desc_device_cdc[] = {
-    0x12, 0x01, 0x00, 0x02, 0xEF, 0x02, 0x01, 0x40,
-    0xAA, 0xAA, 0xDD, 0xDD, 0x00, 0x01, 0x01, 0x02, 0x03, 0x01
+    0x12, 0x01, 0x00, 0x02, 0xEF, 0x02, 0x01, 0x08, // Max Packet Size 0 = 8 (CRITICAL FIX)
+    0x8A, 0x2E, 0x0A, 0x00, 0x14, 0x01, 0x01, 0x02, 0x03, 0x01 // VID/PID: 0x2E8A / 0x000A
 };
 
 uint8_t const * tud_descriptor_device_cb(void) {
     return is_config_mode ? desc_device_cdc : desc_device_xinput;
 }
+
+// ====================================================================
+// 2. ISOLATED CONFIGURATION DESCRIPTORS
+// ====================================================================
 
 // Mode A: Xbox 360 Layout (49 Bytes)
 static const uint8_t desc_config_xinput[] = {
@@ -63,6 +71,9 @@ uint8_t const * tud_descriptor_configuration_cb(uint8_t index) {
     return is_config_mode ? desc_config_cdc : desc_config_xinput;
 }
 
+// ====================================================================
+// 3. SEPARATED STRING DESCRIPTORS
+// ====================================================================
 static const char* string_desc_arr[] = {
     (const char[]) { 0x09, 0x04 }, 
     "Microsoft Corporation",       
@@ -82,6 +93,12 @@ uint16_t const* tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
     } else {
         if (index >= sizeof(string_desc_arr)/sizeof(string_desc_arr[0])) return NULL;
         const char* str = string_desc_arr[index];
+        
+        // Morph product identification labels dynamically to look clean
+        if (index == 2 && is_config_mode) {
+            str = "Humanizer Configuration Port";
+        }
+
         chr_count = (uint8_t) strlen(str);
         if (chr_count > 127) chr_count = 127;
         for (uint8_t i = 0; i < chr_count; i++) {
@@ -92,6 +109,9 @@ uint16_t const* tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
     return _desc_str;
 }
 
+// ====================================================================
+// 4. WEB SERIAL CONFIGURATION COMMAND HANDLER
+// ====================================================================
 void tud_config_handle_serial(void) {
     if (tud_cdc_available()) {
         char buffer[32];
@@ -104,13 +124,15 @@ void tud_config_handle_serial(void) {
             
             busy_wait_us_32(50000); 
             
-            // Force hardware watchdog to reboot straight back into controller mode
             watchdog_enable(1, false);
             while (1);
         }
     }
 }
 
+// ====================================================================
+// 5. APPLICATION CLASS DRIVER INTERNAL ROUTINES
+// ====================================================================
 static uint8_t endpoint_in  = 0xFF;
 static uint8_t endpoint_out = 0xFF;
 static uint8_t ep_in_buffer[ENDPOINT_SIZE];
@@ -182,7 +204,12 @@ static const usbd_class_driver_t xinput_driver = {
     .sof              = NULL
 };
 
+// CRITICAL FIX: Hide the XInput application driver from TinyUSB when in Serial Config Mode
 usbd_class_driver_t const* usbd_app_driver_get_cb(uint8_t *driver_count) {
+    if (is_config_mode) {
+        *driver_count = 0;
+        return NULL;
+    }
     *driver_count = 1;
     return &xinput_driver;
 }
