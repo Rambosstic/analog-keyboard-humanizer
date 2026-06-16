@@ -110,27 +110,6 @@ uint16_t const* tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
 }
 
 // ====================================================================
-// 4. WEB SERIAL CONFIGURATION COMMAND HANDLER
-// ====================================================================
-void tud_config_handle_serial(void) {
-    if (tud_cdc_available()) {
-        char buffer[32];
-        uint32_t count = tud_cdc_read(buffer, sizeof(buffer) - 1);
-        buffer[count] = '\0'; 
-
-        if (strstr(buffer, "REBOOT") != NULL) {
-            tud_cdc_write_str("Rebooting to Gamepad Mode...\r\n");
-            tud_cdc_write_flush();
-            
-            busy_wait_us_32(50000); 
-            
-            watchdog_enable(1, false);
-            while (1);
-        }
-    }
-}
-
-// ====================================================================
 // 5. APPLICATION CLASS DRIVER INTERNAL ROUTINES
 // ====================================================================
 static uint8_t endpoint_in  = 0xFF;
