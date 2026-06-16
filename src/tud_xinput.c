@@ -2,11 +2,11 @@
 #include "device/usbd_pvt.h"
 #include "tud_xinput.h"
 #include "hardware/watchdog.h"
+#include "pico/time.h" // Required for hardware delay functions
 #include <string.h>
 
 #define ENDPOINT_SIZE 20  
 
-// Global Mode State Tracker
 static bool is_config_mode = false;
 
 void tud_set_config_mode(bool enable) {
@@ -16,10 +16,6 @@ void tud_set_config_mode(bool enable) {
 bool tud_in_config_mode(void) {
     return is_config_mode;
 }
-
-// ====================================================================
-// 1. DUAL DEVICE DESCRIPTORS
-// ====================================================================
 
 // Mode A: Pure Xbox 360 Controller
 static const uint8_t desc_device_xinput[] = {
@@ -37,33 +33,29 @@ uint8_t const * tud_descriptor_device_cb(void) {
     return is_config_mode ? desc_device_cdc : desc_device_xinput;
 }
 
-// ====================================================================
-// 2. DUAL CONFIGURATION DESCRIPTORS
-// ====================================================================
-
 // Mode A: Xbox 360 Layout (49 Bytes)
 static const uint8_t desc_config_xinput[] = {
-    0x09, 0x02, 0x31, 0x00, 0x01, 0x01, 0x00, 0xA0, 0xFA, // Header
-    0x09, 0x04, 0x00, 0x00, 0x02, 0xFF, 0x5D, 0x01, 0x00, // Interface 0
-    0x11, 0x21, 0x00, 0x01, 0x01, 0x25, 0x81, 0x14,       // Handshake
+    0x09, 0x02, 0x31, 0x00, 0x01, 0x01, 0x00, 0xA0, 0xFA, 
+    0x09, 0x04, 0x00, 0x00, 0x02, 0xFF, 0x5D, 0x01, 0x00, 
+    0x11, 0x21, 0x00, 0x01, 0x01, 0x25, 0x81, 0x14,       
     0x00, 0x00, 0x00, 0x00, 0x13, 0x02, 0x08, 0x00, 0x00,
-    0x07, 0x05, 0x81, 0x03, 0x20, 0x00, 0x04,             // EP IN
-    0x07, 0x05, 0x02, 0x03, 0x20, 0x00, 0x08              // EP OUT
+    0x07, 0x05, 0x81, 0x03, 0x20, 0x00, 0x04,             
+    0x07, 0x05, 0x02, 0x03, 0x20, 0x00, 0x08              
 };
 
 // Mode B: Standard CDC Serial Layout (75 Bytes)
 static const uint8_t desc_config_cdc[] = {
-    0x09, 0x02, 0x4B, 0x00, 0x02, 0x01, 0x00, 0xC0, 0x32, // Header
-    0x08, 0x0B, 0x00, 0x02, 0x02, 0x02, 0x01, 0x00,       // IAD
-    0x09, 0x04, 0x00, 0x00, 0x01, 0x02, 0x02, 0x01, 0x00, // CDC Comm ITF
-    0x05, 0x24, 0x00, 0x10, 0x01,                         // Header Functional
-    0x05, 0x24, 0x01, 0x00, 0x01,                         // Call Management
-    0x04, 0x24, 0x02, 0x02,                               // ACM Functional
-    0x05, 0x24, 0x06, 0x00, 0x01,                         // Union Functional
-    0x07, 0x05, 0x83, 0x03, 0x08, 0x00, 0x10,             // Interrupt Endpoint
-    0x09, 0x04, 0x01, 0x00, 0x02, 0x0A, 0x00, 0x00, 0x00, // CDC Data ITF
-    0x07, 0x05, 0x82, 0x02, 0x40, 0x00, 0x00,             // Data IN Endpoint
-    0x07, 0x05, 0x01, 0x02, 0x40, 0x00, 0x00              // Data OUT Endpoint
+    0x09, 0x02, 0x4B, 0x00, 0x02, 0x01, 0x00, 0xC0, 0x32, 
+    0x08, 0x0B, 0x00, 0x02, 0x02, 0x02, 0x01, 0x00,       
+    0x09, 0x04, 0x00, 0x00, 0x01, 0x02, 0x02, 0x01, 0x00, 
+    0x05, 0x24, 0x00, 0x10, 0x01,                         
+    0x05, 0x24, 0x01, 0x00, 0x01,                         
+    0x04, 0x24, 0x02, 0x02,                               
+    0x05, 0x24, 0x06, 0x00, 0x01,                         
+    0x07, 0x05, 0x83, 0x03, 0x08, 0x00, 0x10,             
+    0x09, 0x04, 0x01, 0x00, 0x02, 0x0A, 0x00, 0x00, 0x00, 
+    0x07, 0x05, 0x82, 0x02, 0x40, 0x00, 0x00,             
+    0x07, 0x05, 0x01, 0x02, 0x40, 0x00, 0x00              
 };
 
 uint8_t const * tud_descriptor_configuration_cb(uint8_t index) {
@@ -71,9 +63,6 @@ uint8_t const * tud_descriptor_configuration_cb(uint8_t index) {
     return is_config_mode ? desc_config_cdc : desc_config_xinput;
 }
 
-// ====================================================================
-// 3. STRING DESCRIPTORS
-// ====================================================================
 static const char* string_desc_arr[] = {
     (const char[]) { 0x09, 0x04 }, 
     "Microsoft Corporation",       
@@ -103,32 +92,23 @@ uint16_t const* tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
     return _desc_str;
 }
 
-// ====================================================================
-// 4. WEB SERIAL CONFIGURATION COMMAND HANDLER
-// ====================================================================
 void tud_config_handle_serial(void) {
     if (tud_cdc_available()) {
         char buffer[32];
         uint32_t count = tud_cdc_read(buffer, sizeof(buffer) - 1);
-        buffer[count] = '\0'; // Safeguard string termination
+        buffer[count] = '\0'; 
 
-        // Check if the web app sent the escape command
         if (strstr(buffer, "REBOOT") != NULL) {
             tud_cdc_write_str("Rebooting to Gamepad Mode...\r\n");
             tud_cdc_write_flush();
             
-            // Short delay to let the message send before killing the connection
-            busy_wait_us_32b(50000); 
+            busy_wait_us_32(50000); // Fixed typo here
             
-            // Hard software reset straight back to normal controller deployment
             watchdog_reboot(0, 0, 10);
         }
     }
 }
 
-// ====================================================================
-// 5. APPLICATION CLASS DRIVER INTERNAL ROUTINES
-// ====================================================================
 static uint8_t endpoint_in  = 0xFF;
 static uint8_t endpoint_out = 0xFF;
 static uint8_t ep_in_buffer[ENDPOINT_SIZE];
@@ -150,7 +130,6 @@ static void xinput_reset(uint8_t rhport) {
 }
 
 static uint16_t xinput_open(uint8_t rhport, tusb_desc_interface_t const *itf_desc, uint16_t max_length) {
-    // If we're booted into Web Serial mode, don't let XInput bind to the hardware endpoints
     if (is_config_mode) return 0;
 
     uint16_t driver_length = sizeof(tusb_desc_interface_t) + (itf_desc->bNumEndpoints * sizeof(tusb_desc_endpoint_t)) + 17;
