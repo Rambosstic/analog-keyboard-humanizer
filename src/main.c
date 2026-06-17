@@ -23,8 +23,11 @@ bool tud_in_config_mode(void);
 #define USB_HOST_PWR_PIN 18
 #define CONFIG_MAGIC_NUM 0x1A2B3C4D 
 
+// ====================================================================
+// STORAGE STRUCTURE
+// ====================================================================
 #define FLASH_MAGIC_KEY 0x48554D4E 
-#define FLASH_TARGET_OFFSET (4 * 1024 * 1024 - FLASH_SECTOR_SIZE) 
+#define FLASH_TARGET_OFFSET (1024 * 1024) 
 
 typedef struct {
     uint32_t magic;           
@@ -43,6 +46,9 @@ static Humanizer humanizer;
 static volatile uint16_t latest_buttons = 0;
 static uint32_t combo_start_time = 0;
 
+static bool pending_save_and_reboot = false;
+static uint32_t save_trigger_time = 0;
+
 void load_settings_from_flash(void) {
     humanizer_config_t *flash_profile = (humanizer_config_t *) flash_target_contents;
     
@@ -59,57 +65,49 @@ void load_settings_from_flash(void) {
 void save_settings_to_flash(humanizer_config_t *new_config) {
     new_config->magic = FLASH_MAGIC_KEY;
     
+    // 🛑 The RP2040 REQUIRES writes to be exactly 256 bytes!
+    uint8_t page_buffer[FLASH_PAGE_SIZE];
+    memset(page_buffer, 0, FLASH_PAGE_SIZE); 
+    memcpy(page_buffer, new_config, sizeof(humanizer_config_t)); 
+    
     uint32_t saved_interrupts = save_and_disable_interrupts();
     flash_range_erase(FLASH_TARGET_OFFSET, FLASH_SECTOR_SIZE);
-    flash_range_program(FLASH_TARGET_OFFSET, (const uint8_t *)new_config, sizeof(humanizer_config_t));
+    
+    flash_range_program(FLASH_TARGET_OFFSET, page_buffer, FLASH_PAGE_SIZE);
     restore_interrupts(saved_interrupts);
 }
 
-// -------------------------------------------------------------------------
-// SEPARATED PARSER LOGIC
-// -------------------------------------------------------------------------
+// ====================================================================
+// WEB CONFIGURATOR: NON-BLOCKING TEXT PARSER
+// ====================================================================
 void process_web_serial_commands(void) {
     if (tud_cdc_available()) {
         char buffer[64];
         uint32_t count = tud_cdc_read(buffer, sizeof(buffer) - 1);
         buffer[count] = '\0'; 
 
-        // COMMAND 1: SAVE ONLY
         if (strncmp(buffer, "SET:", 4) == 0) {
-            humanizer_config_t new_cfg;
             int j, s, d;
-            
             if (sscanf(buffer, "SET:%d,%d,%d", &j, &s, &d) == 3) {
-                new_cfg.jitter_level   = (uint16_t)j;
-                new_cfg.smoothing_rate = (uint16_t)s;
-                new_cfg.deadzone_mod   = (uint16_t)d;
+                // Update local configuration profile
+                active_config.jitter_level   = (uint16_t)j;
+                active_config.smoothing_rate = (uint16_t)s;
+                active_config.deadzone_mod   = (uint16_t)d;
                 
-                save_settings_to_flash(&new_cfg);
-                
-                tud_cdc_write_str("SAVED\r\n");
+                tud_cdc_write_str("DATA_RECEIVED_AWAITING_LOCK\r\n");
                 tud_cdc_write_flush();
+                
+                // Flag the main loop to handle the delayed flash save
+                pending_save_and_reboot = true;
+                save_trigger_time = to_ms_since_boot(get_absolute_time());
             }
-        }
-
-        // COMMAND 2: REBOOT ONLY
-        if (strstr(buffer, "REBOOT") != NULL) {
-            tud_cdc_write_str("REBOOTING\r\n");
-            tud_cdc_write_flush();
-            
-            // Allow buffer to empty slightly
-            for (int i = 0; i < 50; i++) { tud_task(); busy_wait_us_32(1000); }
-            
-            // Wipe hardware register and reset
-            watchdog_hw->scratch[0] = 0;
-            watchdog_reboot(0, 0, 10);
-            while (1);
         }
     }
 }
 
-// -------------------------------------------------------------------------
+// ====================================================================
 // CORE 1: GAMEPAD LOGIC
-// -------------------------------------------------------------------------
+// ====================================================================
 void core1_main(void)
 {
     gpio_init(USB_HOST_PWR_PIN);
@@ -216,15 +214,26 @@ int main(void)
     
     tud_init(BOARD_TUD_RHPORT);
     
+    // Core 1 (PIO USB) stays completely asleep during Web Config Mode
     if (!tud_in_config_mode()) {
         multicore_launch_core1(core1_main);
     }
     
     while (true) {
-        tud_task();
+        tud_task(); 
         
         if (tud_in_config_mode()) {
             process_web_serial_commands(); 
+            
+            // Execute the delayed save to ensure the browser has dropped connection
+            if (pending_save_and_reboot) {
+                if (to_ms_since_boot(get_absolute_time()) - save_trigger_time > 500) {
+                    save_settings_to_flash(&active_config);
+                    watchdog_hw->scratch[0] = 0;
+                    watchdog_reboot(0, 0, 10);
+                    while(1);
+                }
+            }
         } else if (report_ready) {
             tud_xinput_send_report(current_report, sizeof(current_report));
             report_ready = false;
