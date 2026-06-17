@@ -4,13 +4,11 @@
 #include <stdint.h>
 
 typedef struct {
-    float current_noise_l; 
-    float target_noise_l;  
-    float prev_mag_l;      // PHASE 2.5: Tracks release velocity for the left stick
+    float phase_l;    // The continuous "time" clock for the left stick wave
+    float prev_mag_l; // Tracks velocity for the release turbo
     
-    float current_noise_r;
-    float target_noise_r;
-    float prev_mag_r;      // PHASE 2.5: Tracks release velocity for the right stick
+    float phase_r;    // The continuous "time" clock for the right stick wave
+    float prev_mag_r; 
 } Humanizer;
 
 void humanizer_init(Humanizer* h);
