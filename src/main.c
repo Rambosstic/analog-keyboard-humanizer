@@ -167,7 +167,7 @@ void tuh_xinput_report_received_cb(uint8_t dev_addr, uint8_t instance, xinputh_i
     int16_t ry = p->sThumbRY;
     
     // --- UPDATED CALL: Feeding active_config.jitter_level into the engine ---
-    humanizer_process(&humanizer, &lx, &ly, &rx, &ry, active_config.circ_error, active_config.jitter_level);
+    humanizer_process(&humanizer, &lx, &ly, &rx, &ry, active_config.circ_error, active_config.jitter_level, active_config.smoothing_rate);
     
     current_report[0]  = 0x00;
     current_report[1]  = 0x14;
