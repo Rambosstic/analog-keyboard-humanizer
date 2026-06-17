@@ -22,25 +22,24 @@ void process_stick(int16_t* out_x, int16_t* out_y, int16_t raw_x, int16_t raw_y,
     float x = (float)raw_x;
     float y = (float)raw_y;
     
-    // Calculate current magnitude and velocity (delta)
     float magnitude = sqrtf((x * x) + (y * y));
     float mag_delta = magnitude - *prev_mag;
-    *prev_mag = magnitude; // Save state for the next frame
+    *prev_mag = magnitude; 
 
-    // --- 1. THE VELOCITY-AWARE NOISE ENGINE ---
+    // --- 1. FLUID VELOCITY-AWARE ENGINE ---
     if (deviation_level > 0) {
         if (fabsf(*target_noise - *current_noise) < 0.05f) {
             *target_noise = ((float)rand() / (float)(RAND_MAX)) * 2.0f - 1.0f;
         }
 
-        // Base sweep speed tuned for a 71Hz USB polling rate (Holding/Pressing)
-        float sweep_speed = 0.03f;
+        float sweep_speed = 0.03f; // Base speed for pressing/holding
 
-        // PHASE 2.5: Spring Release Divergence
-        // If magnitude drops by more than 100 units in a single frame, the key is physically rising.
-        // We turbo-charge the wobble to mimic spring tension snap-back!
-        if (mag_delta < -100.0f) {
-            sweep_speed = 0.25f; 
+        // If the key is releasing (magnitude is shrinking by at least 10 units to ignore static jitter)
+        if (mag_delta < -10.0f) {
+            // Dynamically scale the speed boost based on how fast the key is rising
+            float speed_boost = fabsf(mag_delta) / 2000.0f;
+            if (speed_boost > 0.4f) speed_boost = 0.4f; // Cap the max turbo at 0.4x
+            sweep_speed += speed_boost;
         }
 
         *current_noise = (*current_noise) + ((*target_noise - *current_noise) * sweep_speed);
@@ -49,13 +48,20 @@ void process_stick(int16_t* out_x, int16_t* out_y, int16_t raw_x, int16_t raw_y,
         *target_noise = 0.0f;
     }
 
-    // --- 2. APPLY ROTATION AND CLAMP ---
+    // --- 2. INVERTED ANGULAR SCALING ---
     if (magnitude > 0) {
         float angle = atan2f(y, x);
 
         if (deviation_level > 0) {
             float max_wobble_rads = (deviation_level / 100.0f) * (6.0f * (M_PI / 180.0f));
-            angle += (*current_noise * max_wobble_rads);
+            
+            // Create a multiplier that is 1.0 at the edge, and grows up to 4.0 at the center
+            float center_looseness = 1.0f - (magnitude / AXIS_MAX);
+            if (center_looseness < 0.0f) center_looseness = 0.0f;
+            float wobble_multiplier = 1.0f + (center_looseness * 3.0f);
+
+            // Apply the amplified wobble to the angle
+            angle += (*current_noise * max_wobble_rads * wobble_multiplier);
         }
 
         float limit = AXIS_MAX * (1.0f + (error_pct / 100.0f));
@@ -79,7 +85,6 @@ void process_stick(int16_t* out_x, int16_t* out_y, int16_t raw_x, int16_t raw_y,
 void humanizer_process(Humanizer* h, int16_t* lx, int16_t* ly, int16_t* rx, int16_t* ry, 
                        uint16_t circ_error, uint16_t axis_deviation) {
     
-    // Pass the state memory pointers (including prev_mag) into the processor
     process_stick(lx, ly, *lx, *ly, circ_error, axis_deviation, 
                   &(h->current_noise_l), &(h->target_noise_l), &(h->prev_mag_l));
                   
