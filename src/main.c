@@ -31,9 +31,10 @@ bool tud_in_config_mode(void);
 
 typedef struct {
     uint32_t magic;           
-    uint16_t jitter_level;    
-    uint16_t smoothing_rate;  
-    uint16_t deadzone_mod;    
+    uint16_t circ_error;      // PHASE 1: Gate Circularity
+    uint16_t jitter_level;    // PHASE 2: (Disabled for now)
+    uint16_t smoothing_rate;  // PHASE 3: (Disabled for now)
+    uint16_t deadzone_mod;    // PHASE 4: (Disabled for now)
 } humanizer_config_t;
 
 static humanizer_config_t active_config;
@@ -56,6 +57,7 @@ void load_settings_from_flash(void) {
         memcpy(&active_config, flash_profile, sizeof(humanizer_config_t));
     } else {
         active_config.magic = FLASH_MAGIC_KEY;
+        active_config.circ_error = 3; // Default to 3% error
         active_config.jitter_level = 0;    
         active_config.smoothing_rate = 0; 
         active_config.deadzone_mod = 0;    
@@ -65,7 +67,6 @@ void load_settings_from_flash(void) {
 void save_settings_to_flash(humanizer_config_t *new_config) {
     new_config->magic = FLASH_MAGIC_KEY;
     
-    // 🛑 The RP2040 REQUIRES writes to be exactly 256 bytes!
     uint8_t page_buffer[FLASH_PAGE_SIZE];
     memset(page_buffer, 0, FLASH_PAGE_SIZE); 
     memcpy(page_buffer, new_config, sizeof(humanizer_config_t)); 
@@ -87,9 +88,10 @@ void process_web_serial_commands(void) {
         buffer[count] = '\0'; 
 
         if (strncmp(buffer, "SET:", 4) == 0) {
-            int j, s, d;
-            if (sscanf(buffer, "SET:%d,%d,%d", &j, &s, &d) == 3) {
-                // Update local configuration profile
+            int c, j, s, d;
+            // Now parsing 4 variables!
+            if (sscanf(buffer, "SET:%d,%d,%d,%d", &c, &j, &s, &d) == 4) {
+                active_config.circ_error     = (uint16_t)c;
                 active_config.jitter_level   = (uint16_t)j;
                 active_config.smoothing_rate = (uint16_t)s;
                 active_config.deadzone_mod   = (uint16_t)d;
@@ -97,7 +99,6 @@ void process_web_serial_commands(void) {
                 tud_cdc_write_str("DATA_RECEIVED_AWAITING_LOCK\r\n");
                 tud_cdc_write_flush();
                 
-                // Flag the main loop to handle the delayed flash save
                 pending_save_and_reboot = true;
                 save_trigger_time = to_ms_since_boot(get_absolute_time());
             }
@@ -172,10 +173,8 @@ void tuh_xinput_report_received_cb(uint8_t dev_addr, uint8_t instance, xinputh_i
     int16_t rx = p->sThumbRX;
     int16_t ry = p->sThumbRY;
     
-    humanizer_process(&humanizer, &lx, &ly, &rx, &ry, 
-                      active_config.jitter_level, 
-                      active_config.smoothing_rate, 
-                      active_config.deadzone_mod);
+    // Pass the active circularity setting into the math engine
+    humanizer_process(&humanizer, &lx, &ly, &rx, &ry, active_config.circ_error);
     
     current_report[0]  = 0x00;
     current_report[1]  = 0x14;
@@ -214,7 +213,6 @@ int main(void)
     
     tud_init(BOARD_TUD_RHPORT);
     
-    // Core 1 (PIO USB) stays completely asleep during Web Config Mode
     if (!tud_in_config_mode()) {
         multicore_launch_core1(core1_main);
     }
@@ -225,7 +223,6 @@ int main(void)
         if (tud_in_config_mode()) {
             process_web_serial_commands(); 
             
-            // Execute the delayed save to ensure the browser has dropped connection
             if (pending_save_and_reboot) {
                 if (to_ms_since_boot(get_absolute_time()) - save_trigger_time > 500) {
                     save_settings_to_flash(&active_config);
