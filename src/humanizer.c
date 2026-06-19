@@ -69,7 +69,7 @@ void process_stick(int16_t* out_x, int16_t* out_y, int16_t raw_x, int16_t raw_y,
             if (deflection_ratio > 1.0f) deflection_ratio = 1.0f;
             
             float looseness = 1.0f - deflection_ratio; 
-            float curve_multiplier = 0.10f + (0.90f * looseness);
+            float curve_multiplier = 0.25f + (0.75f * looseness);
             
             target_angle += (wave * max_wobble_rads * curve_multiplier);
         }
