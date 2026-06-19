@@ -90,11 +90,7 @@ void process_stick(int16_t* out_x, int16_t* out_y, int16_t raw_x, int16_t raw_y,
     // Smooth the Magnitude (Radius)
     float new_mag = *prev_out_mag + alpha * (target_mag - *prev_out_mag);
     
-    // THE ZENO PARADOX FIX: Absolute Center Snap Deadzone
-    if (raw_mag == 0 && new_mag < 150.0f) {
-        new_mag = 0.0f;
-    }
-
+ 
     // Smooth the Angle (The sweep/roll fix)
     float new_angle = *prev_out_angle;
     if (new_mag > 0.0f) { // Only update angle if we are actually moving
