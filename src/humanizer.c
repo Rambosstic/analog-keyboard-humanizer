@@ -100,15 +100,15 @@ static void process_stick(Humanizer* h,
     if (tilt_deg > 0) {
         float center_rad = -((float)tilt_deg) * (M_PI / 180.0f);
         float wander = 0.30f * fabsf(center_rad);
-        float theta_b = 0.0006f * dt_scale;
-        *bias += theta_b * (center_rad - *bias) + wander * dt_scale * gauss(h);
+        // Slow drift toward a wandering target. The random kick is tiny so the
+        // bias moves over SECONDS, not per-tick — a steady lean, not jitter.
+        float theta_b = 0.002f * dt_scale;
+        *bias += theta_b * (center_rad - *bias) + (wander * 0.01f) * dt_scale * gauss(h);
         float lo = center_rad - wander, hi = center_rad + wander;
         if (*bias < lo) *bias = lo;
         if (*bias > hi) *bias = hi;
-        angle += (*bias) * center_fade;
+        angle += (*bias);
     } else {
-        *bias += 0.01f * dt_scale * (0.0f - *bias);
-    }
 
     // ---- gate as bounded random walk on outer radius (hall-effect rim slop) ----
     {
