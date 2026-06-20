@@ -155,3 +155,4 @@ void humanizer_process(Humanizer* h, int16_t* lx, int16_t* ly, int16_t* rx, int1
     process_stick(h, rx, ry, *rx, *ry, circ_error, axis_deviation, smoothing_rate, gate_level, tilt_deg,
                   dt_scale, &h->prev_x_r, &h->prev_y_r, &h->wob_r, &h->bias_r, &h->gate_r, &h->sig_r);
 }
+```
