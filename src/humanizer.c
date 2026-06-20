@@ -56,8 +56,8 @@ static void process_stick(Humanizer* h,
     // ---- CENTER FLOOR ----
     // Below this magnitude the polar angle (atan2) is numerically unstable: a few
     // bits of noise on a near-zero vector swing the angle wildly, and any rotation
-    // (tilt/wobble) smears that into visible hair. So near center we bypass ALL
-    // polar math and pass the clean smoothed value straight through.
+    // (tilt/wobble) smears that into visible hair. Near center we bypass ALL polar
+    // math and pass the clean smoothed value straight through.
     if (mag < 1500.0f) {
         *out_x = (int16_t)sm_x;
         *out_y = (int16_t)sm_y;
@@ -81,11 +81,10 @@ static void process_stick(Humanizer* h,
     }
 
     // ---- STEP 2: angular wobble as bounded random walk (OU) ----
-    // NOTE: theta is the OU mean-reversion strength (pull back toward 0), NOT a
-    // frequency. OU noise is broadband low-pass white noise with no single peak.
+    // theta is OU mean-reversion strength (pull toward 0), NOT a frequency.
     if (deviation_level > 0) {
         float max_wobble = (deviation_level / 100.0f) * (20.0f * (M_PI / 180.0f));
-        float theta = 0.06f * dt_scale;        // mean-reversion strength, not frequency
+        float theta = 0.06f * dt_scale;
         float sigma = 0.10f * dt_scale * (*sig);
         *wob += -theta * (*wob) + sigma * gauss(h);
         if (*wob >  1.0f) *wob =  1.0f;
@@ -96,12 +95,10 @@ static void process_stick(Humanizer* h,
         angle += (*wob) * max_wobble * curve * center_fade;
     }
 
-    // ---- wandering ergonomic tilt ----
+    // ---- wandering ergonomic tilt (slow drift, not per-tick jitter) ----
     if (tilt_deg > 0) {
         float center_rad = -((float)tilt_deg) * (M_PI / 180.0f);
         float wander = 0.30f * fabsf(center_rad);
-        // Slow drift toward a wandering target. The random kick is tiny so the
-        // bias moves over SECONDS, not per-tick — a steady lean, not jitter.
         float theta_b = 0.002f * dt_scale;
         *bias += theta_b * (center_rad - *bias) + (wander * 0.01f) * dt_scale * gauss(h);
         float lo = center_rad - wander, hi = center_rad + wander;
@@ -109,6 +106,8 @@ static void process_stick(Humanizer* h,
         if (*bias > hi) *bias = hi;
         angle += (*bias);
     } else {
+        *bias += 0.01f * dt_scale * (0.0f - *bias);
+    }
 
     // ---- gate as bounded random walk on outer radius (hall-effect rim slop) ----
     {
