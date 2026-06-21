@@ -68,7 +68,9 @@ static void process_stick(Humanizer* h,
     float deflection = mag / AXIS_MAX;
     if (deflection > 1.0f) deflection = 1.0f;
 
-    // ---- non-stationary sigma: slowly wander noise intensity ----
+    // ---- STEP 2: THE UNIFIED PHYSICS ENGINE (Always Runs) ----
+    
+    // Non-stationary sigma: slowly wander the overall noise intensity
     {
         float theta_sig = 0.0008f * dt_scale;
         *sig += theta_sig * (1.0f - *sig) + 0.02f * dt_scale * gauss(h);
@@ -76,59 +78,59 @@ static void process_stick(Humanizer* h,
         if (*sig > 1.6f) *sig = 1.6f;
     }
 
-    // ---- STEP 2: The "Organic Wave" (Stochastic Damped Oscillator) ----
+    // Mass-Spring-Damper (Generates the master "Organic Waves")
+    float stiffness = 0.01f;  
+    float damping = 0.05f;    
+    float noise_force = 0.006f * gauss(h) * (*sig); 
+
+    *wob_v += (-stiffness * (*wob_p) - damping * (*wob_v) + noise_force) * dt_scale;
+    *wob_p += (*wob_v) * dt_scale;
+
+    // Soft clamp to prevent physics explosion
+    if (*wob_p >  1.2f) { *wob_p =  1.2f; *wob_v *= -0.5f; }
+    if (*wob_p < -1.2f) { *wob_p = -1.2f; *wob_v *= -0.5f; }
+
+    // ---- STEP 3: Apply Axis Deviation (Wobble) ----
     if (deviation_level > 0) {
         float max_wobble = (deviation_level / 100.0f) * (20.0f * (M_PI / 180.0f));
-        
-        // Mass-Spring-Damper Physics
-        float stiffness = 0.01f;  // Determines the frequency/speed of the waves
-        float damping = 0.05f;    // Smoothes out the jitter into rolling curves
-        float noise_force = 0.006f * gauss(h) * (*sig); // The random wind pushing the thumb
-
-        // Update velocity, then update position
-        *wob_v += (-stiffness * (*wob_p) - damping * (*wob_v) + noise_force) * dt_scale;
-        *wob_p += (*wob_v) * dt_scale;
-
-        // Soft clamp to prevent physics explosion from edge cases
-        if (*wob_p >  1.2f) { *wob_p =  1.2f; *wob_v *= -0.5f; }
-        if (*wob_p < -1.2f) { *wob_p = -1.2f; *wob_v *= -0.5f; }
-
-        // INVERTED curve: precise near center, gracefully sloppy at full deflection.
         float curve = 0.15f + (0.85f * deflection);
         angle += (*wob_p) * max_wobble * curve * center_fade;
     }
 
-    // ---- wandering ergonomic tilt ----
+    // ---- STEP 4: Ergonomic Tilt (Wandering Baseline) ----
     if (tilt_deg > 0) {
         float center_rad = -((float)tilt_deg) * (M_PI / 180.0f);
-        float wander = 0.30f * fabsf(center_rad);
-        float theta_b = 0.0006f * dt_scale;
-        *bias += theta_b * (center_rad - *bias) + wander * dt_scale * gauss(h);
-        float lo = center_rad - wander, hi = center_rad + wander;
-        if (*bias < lo) *bias = lo;
-        if (*bias > hi) *bias = hi;
+        float max_wander = 0.30f * fabsf(center_rad);
+        
+        // Use the smooth physics position as a slow, lazy target for the tilt to follow
+        float target_bias = center_rad + (*wob_p * max_wander);
+        
+        // Heavy low-pass filter makes the tilt incredibly smooth and slow
+        *bias += 0.015f * dt_scale * (target_bias - *bias);
+        
         angle += (*bias) * center_fade;
     } else {
-        *bias += 0.01f * dt_scale * (0.0f - *bias);
+        *bias += 0.02f * dt_scale * (0.0f - *bias);
     }
 
-    // ---- gate as bounded random walk on outer radius (hall-effect rim slop) ----
+    // ---- STEP 5: Gate Slop (Outer Ring Wander) ----
     {
-        // Lowered the sigma slightly from Claude's version to make outer gate visually smoother
-        float theta_g = 0.02f * dt_scale;
-        float sigma_g = 0.008f * dt_scale * (*sig); 
-        *gate += -theta_g * (*gate) + sigma_g * gauss(h);
-        if (*gate >  1.0f) *gate =  1.0f;
-        if (*gate < -1.0f) *gate = -1.0f;
+        // Drive gate slop using the physics velocity vector (making it mathematically out of phase with tilt)
+        float target_gate = (*wob_v) * 10.0f; 
+        if (target_gate > 1.0f) target_gate = 1.0f;
+        if (target_gate < -1.0f) target_gate = -1.0f;
+        
+        // Smooth low-pass filter
+        *gate += 0.02f * dt_scale * (target_gate - *gate);
     }
     float gate_amt = (gate_level / 100.0f) * 0.03f;
     float dynamic_max_gate = AXIS_MAX * (1.0f - gate_amt * (0.5f + 0.5f * (*gate)));
 
-    // ---- circularity error (static shape) ----
+    // ---- STEP 6: Circularity Error ----
     float limit = dynamic_max_gate * (1.0f + (error_pct / 100.0f));
     if (mag > limit) mag = limit;
 
-    // ---- STEP 3: back to cartesian ----
+    // ---- STEP 7: Back to Cartesian ----
     float final_x = mag * cosf(angle);
     float final_y = mag * sinf(angle);
     if (final_x >  AXIS_MAX) final_x =  AXIS_MAX;
