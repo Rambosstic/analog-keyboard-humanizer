@@ -8,12 +8,16 @@ typedef struct {
     float prev_x_l, prev_y_l;
     float prev_x_r, prev_y_r;
 
-    // OU wobble state (angular), per stick
-    float wob_l, wob_r;
+    // Physics Oscillator State (Position AND Velocity) for the "Organic Wave"
+    float wob_p_l, wob_v_l;
+    float wob_p_r, wob_v_r;
+    
     // OU bias state — the slowly wandering "hand bias"
     float bias_l, bias_r;
+    
     // gate random-walk state, per stick
     float gate_l, gate_r;
+    
     // non-stationary modulation: slowly drifting sigma scaler per stick
     float sig_l, sig_r;
 
