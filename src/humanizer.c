@@ -70,11 +70,22 @@ static void process_stick(Humanizer* h, int16_t* axis_x, int16_t* axis_y, float*
             angle += sinf(h->wobble_phase) * max_wobble * curve;
         }
 
-        // 5. Gate Slop & Circularity Error
-        if (gate_level > 0 || circ_error > 0) {
+        // 5. Circularity Error (Hardware Calibration Flaw)
+        // Applies a permanent, slightly square warp to the entire stick output
+        if (circ_error > 0) {
+            float circ = 1.0f + ((circ_error / 50.0f) * 0.15f * fabs(sinf(angle * 4.0f))); 
+            mag = mag * circ;
+        }
+
+        // 6. Gate Slop (Outer-Ring Plastic Flex)
+        // ONLY applies when the stick is pushed hard against the plastic edge (>80% deflection)
+        if (gate_level > 0 && mag > 0.8f) { 
+            // Fade it in smoothly between 80% and 100% so it doesn't abruptly snap
+            float edge_fade = (mag - 0.8f) / 0.2f; 
+            if (edge_fade > 1.0f) edge_fade = 1.0f;
+            
             float slop = (gate_level / 100.0f) * 0.05f * sinf(h->gate_phase);
-            float circ = 1.0f + ((circ_error / 50.0f) * 0.15f * fabs(sinf(angle * 4.0f))); // Squares the circle slightly
-            mag = mag * circ + slop;
+            mag += (slop * edge_fade);
         }
 
         // Convert back to cartesian
