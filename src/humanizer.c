@@ -10,167 +10,163 @@
 #define TWO_PI (2.0f * (float)M_PI)
 #endif
 
-void humanizer_init(Humanizer* h) {
-    h->wobble_phase = 0.0f;
-    h->tilt_phase = 0.0f;
-    h->gate_phase = 0.0f;
-    
-    h->pos_lx = 0.0f; h->pos_ly = 0.0f;
-    h->vel_lx = 0.0f; h->vel_ly = 0.0f;
-    h->pos_rx = 0.0f; h->pos_ry = 0.0f;
-    h->vel_rx = 0.0f; h->vel_ry = 0.0f;
-    
-    h->was_active_l = false; h->land_offset_l = 0.0f;
-    h->was_active_r = false; h->land_offset_r = 0.0f;
+static float clamp_abs(float val, float max_val) {
+    if (val > max_val) return max_val;
+    if (val < -max_val) return -max_val;
+    return val;
 }
 
-static void process_stick(Humanizer* h, int16_t* axis_x, int16_t* axis_y, 
-                          float* pos_x, float* pos_y, float* vel_x, float* vel_y,
-                          bool* was_active, float* land_offset,
+void humanizer_init(Humanizer* h) {
+    h->tremor_state = 0.0f; h->tilt_state = 0.0f; h->gate_state = 0.0f;
+    h->pos_lx = 0.0f; h->pos_ly = 0.0f;
+    h->vel_lx = 0.0f; h->vel_ly = 0.0f;
+    h->was_active_l = false; h->land_offset_l = 0.0f;
+}
+
+static void process_left_stick(Humanizer* h, int16_t* axis_x, int16_t* axis_y, 
                           uint16_t circ_error, uint16_t jitter_mag, uint16_t jitter_inner, uint16_t jitter_outer, 
-                          uint16_t smoothing_rate, uint16_t gate_level, uint16_t tilt_deg, uint16_t landing_var, uint16_t diagonal_feel) {
+                          uint16_t smoothing_rate, uint16_t gate_level, uint16_t tilt_deg, 
+                          uint16_t landing_var, uint16_t diagonal_feel, uint16_t anti_deadzone) {
     
-    float tx = (float)(*axis_x);
-    float ty = (float)(*axis_y);
+    // --- BACKGROUND STOCHASTIC PINK NOISE (ALWAYS RUNNING) ---
+    float noise_tremor = ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f;
+    float noise_tilt   = ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f;
+    float noise_gate   = ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f;
 
-    // 1. Axis Coupling (Diagonal Feel)
+    h->tremor_state = (h->tremor_state * 0.90f) + (noise_tremor * 0.10f); 
+    h->tilt_state   = (h->tilt_state * 0.995f) + (noise_tilt * 0.005f);   
+    h->gate_state   = (h->gate_state * 0.95f) + (noise_gate * 0.05f); 
+
+    // Normalize input
+    float tx = (float)(*axis_x) / 32767.0f;
+    float ty = (float)(*axis_y) / 32767.0f;
+
+    // 1. Anti-Deadzone
+    float raw_mag_initial = sqrtf(tx*tx + ty*ty);
+    if (anti_deadzone > 0 && raw_mag_initial > 0.01f) {
+        float ad_floor = anti_deadzone / 100.0f;
+        float scaled_mag = ad_floor + raw_mag_initial * (1.0f - ad_floor);
+        tx = (tx / raw_mag_initial) * scaled_mag;
+        ty = (ty / raw_mag_initial) * scaled_mag;
+    }
+
+    // 2. Elliptical Grid Mapping
+    if (circ_error < 50) {
+        float circle_tx = tx * sqrtf(1.0f - (ty * ty) / 2.0f);
+        float circle_ty = ty * sqrtf(1.0f - (tx * tx) / 2.0f);
+        float blend = circ_error / 50.0f;
+        tx = circle_tx + (tx - circle_tx) * blend;
+        ty = circle_ty + (ty - circle_ty) * blend;
+    }
+
+    // 3. Axis Coupling
     if (diagonal_feel > 0) {
-        float coupling = (diagonal_feel / 100.0f) * 0.30f; // Max 30% blend
-        float cx = tx;
-        float cy = ty;
-        // The presence of Y pulls X further in X's current direction
-        tx += coupling * cx * (fabsf(cy) / 32767.0f);
-        ty += coupling * cy * (fabsf(cx) / 32767.0f);
+        float blend = (diagonal_feel / 100.0f) * 0.30f; 
+        float abs_x = fabsf(tx);
+        float abs_y = fabsf(ty);
+        if (abs_x > abs_y && abs_y > 0.01f) {
+            ty += (tx > 0.0f ? abs_y : -abs_y) * blend; 
+        } else if (abs_y > abs_x && abs_x > 0.01f) {
+            tx += (ty > 0.0f ? abs_x : -abs_x) * blend;
+        }
     }
 
-    // 2. 2nd-Order Physics Smoothing (Inertia)
+    float target_mag = sqrtf(tx*tx + ty*ty);
+
+    // 4. Inertia Smoothing
     if (smoothing_rate == 0) {
-        // Zero lag, snap directly
-        *pos_x = tx;
-        *pos_y = ty;
-        *vel_x = 0.0f;
-        *vel_y = 0.0f;
+        h->pos_lx = tx; h->pos_ly = ty;
+        h->vel_lx = 0.0f; h->vel_ly = 0.0f;
     } else {
-        // Map slider (1-100) to spring frequency in Hz (25Hz to 3Hz)
         float freq_hz = 25.0f - (smoothing_rate * 0.22f); 
-        if (freq_hz < 3.0f) freq_hz = 3.0f; // Hard floor to prevent infinite float
-        
+        if (freq_hz < 3.0f) freq_hz = 3.0f; 
         float w = TWO_PI * freq_hz;
-        float k = w * w;      // Spring stiffness
-        float c = 2.0f * w;   // Critical damping
-        float dt = 0.004f;    // 250Hz loop duration
+        float k = w * w;      
+        float c = 2.0f * w;   
+        float dt = 0.004f;    
         
-        float force_x = k * (tx - *pos_x) - c * (*vel_x);
-        float force_y = k * (ty - *pos_y) - c * (*vel_y);
+        float force_x = k * (tx - h->pos_lx) - c * (h->vel_lx);
+        float force_y = k * (ty - h->pos_ly) - c * (h->vel_ly);
         
-        *vel_x += force_x * dt;
-        *vel_y += force_y * dt;
-        *pos_x += (*vel_x) * dt;
-        *pos_y += (*vel_y) * dt;
+        h->vel_lx += force_x * dt; h->vel_ly += force_y * dt;
+        h->pos_lx += (h->vel_lx) * dt; h->pos_ly += (h->vel_ly) * dt;
     }
     
-    float x = *pos_x / 32767.0f;
-    float y = *pos_y / 32767.0f;
+    // 5. Magnitude Recovery
+    float spring_mag = sqrtf((h->pos_lx)*(h->pos_lx) + (h->pos_ly)*(h->pos_ly));
+    if (target_mag > 0.95f && spring_mag < 0.95f && spring_mag > 0.1f) {
+        float correction = 1.0f + (0.95f - spring_mag) * 0.3f; 
+        h->pos_lx *= correction;
+        h->pos_ly *= correction;
+    }
 
+    float x = h->pos_lx;
+    float y = h->pos_ly;
     float mag = sqrtf(x*x + y*y);
     float angle = atan2f(y, x);
 
-    // Only apply complex math if the stick is actually being pushed
     if (mag > 0.01f) {
-        
-        // The Virtual Plastic Ring (Gate Clamp)
-        if (mag > 1.0f) {
-            mag = 1.0f; 
-        }
+        if (mag > 1.0f) mag = 1.0f; 
+        float deflection = mag;
 
-        float deflection = mag; // Safely clamped to a 0.0 - 1.0 scale
-
-        // 3. Landing Variation (Per-Press Dice Roll)
+        // 6. Landing Variation
         if (landing_var > 0) {
-            if (!(*was_active) && mag > 0.05f) { 
-                *land_offset = ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f; 
-                *was_active = true;
+            if (!(h->was_active_l) && mag > 0.05f) { 
+                h->land_offset_l = ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f; 
+                h->was_active_l = true;
             }
             float land_deg_max = (landing_var / 100.0f) * 6.0f; 
-            float land_rad = (*land_offset) * (land_deg_max * (float)M_PI / 180.0f);
+            float land_rad = (h->land_offset_l) * (land_deg_max * (float)M_PI / 180.0f);
             angle += land_rad; 
         }
         
-        // 4. Ergonomic Tilt (Wandering baseline)
-        // Blooming effect: scales intensity based on current physical stick deflection
+        // 7. Ergonomic Tilt
         if (tilt_deg > 0) {
             float tilt_max = (tilt_deg / 100.0f) * 15.0f * (M_PI / 180.0f);
-            angle += sinf(h->tilt_phase) * tilt_max * deflection;
+            angle += (h->tilt_state) * tilt_max * deflection;
         }
 
-        // 5. Dynamic Wobble (The 3-Slider Curve)
+        // 8. Dynamic Wobble
         if (jitter_mag > 0) {
             float max_wobble = (jitter_mag / 100.0f) * (6.0f * (M_PI / 180.0f));
             float inner = jitter_inner / 100.0f;
             float outer = jitter_outer / 100.0f;
-            
             float curve = inner + (outer - inner) * deflection; 
-            angle += sinf(h->wobble_phase) * max_wobble * curve;
+            angle += (h->tremor_state) * max_wobble * curve;
         }
 
-        // 6. Circularity Error (Hardware Calibration Flaw)
-        if (circ_error > 0) {
-            float circ = 1.0f + ((circ_error / 50.0f) * 0.414f * fabsf(sinf(angle * 2.0f))); 
-            mag = mag * circ;
-        }
-
-        // 7. Gate Slop (Outer-Ring Plastic Flex)
+        // 9. Gate Slop
         if (gate_level > 0 && mag > 0.8f) { 
             float edge_fade = (mag - 0.8f) / 0.2f; 
             if (edge_fade > 1.0f) edge_fade = 1.0f;
-            
-            float slop = (gate_level / 100.0f) * 0.05f * sinf(h->gate_phase);
+            float slop = (gate_level / 100.0f) * 0.05f * (h->gate_state);
             mag += (slop * edge_fade);
         }
 
-        // Convert back to cartesian
         x = cosf(angle) * mag;
         y = sinf(angle) * mag;
     } else {
-        *was_active = false;
-        *land_offset = 0.0f;
+        h->was_active_l = false;
+        h->land_offset_l = 0.0f;
     }
 
-    // Clamp and output (Safety net for integer conversion)
-    if (x > 1.0f) x = 1.0f; if (x < -1.0f) x = -1.0f;
-    if (y > 1.0f) y = 1.0f; if (y < -1.0f) y = -1.0f;
+    x = clamp_abs(x, 1.0f);
+    y = clamp_abs(y, 1.0f);
 
     *axis_x = (int16_t)(x * 32767.0f);
     *axis_y = (int16_t)(y * 32767.0f);
 }
 
 void humanizer_process(Humanizer* h, int16_t* lx, int16_t* ly, int16_t* rx, int16_t* ry,
-                       uint16_t circ_error, 
-                       uint16_t jitter_mag, uint16_t jitter_inner, uint16_t jitter_outer, 
-                       uint16_t smoothing_rate, uint16_t gate_level,
-                       uint16_t tilt_deg, uint16_t landing_var, uint16_t diagonal_feel, uint16_t passthrough) {
+                       uint16_t circ_error, uint16_t jitter_mag, uint16_t jitter_inner, uint16_t jitter_outer, 
+                       uint16_t smoothing_rate, uint16_t gate_level, uint16_t tilt_deg, uint16_t landing_var, 
+                       uint16_t diagonal_feel, uint16_t anti_deadzone, uint16_t passthrough) {
     
     if (passthrough) return; 
 
-    // Advance oscillators and wrap them to prevent float precision death
-    h->wobble_phase += 0.4f; 
-    if (h->wobble_phase > TWO_PI) h->wobble_phase -= TWO_PI;
-
-    h->tilt_phase   += 0.01f; 
-    if (h->tilt_phase > TWO_PI) h->tilt_phase -= TWO_PI;
-
-    h->gate_phase   += 0.05f; 
-    if (h->gate_phase > TWO_PI) h->gate_phase -= TWO_PI;
-
-    // Process Left Stick
-    process_stick(h, lx, ly, &h->pos_lx, &h->pos_ly, &h->vel_lx, &h->vel_ly, 
-                  &h->was_active_l, &h->land_offset_l,
-                  circ_error, jitter_mag, jitter_inner, jitter_outer, 
-                  smoothing_rate, gate_level, tilt_deg, landing_var, diagonal_feel);
-
-    // Process Right Stick 
-    process_stick(h, rx, ry, &h->pos_rx, &h->pos_ry, &h->vel_rx, &h->vel_ry, 
-                  &h->was_active_r, &h->land_offset_r,
-                  circ_error, jitter_mag, jitter_inner, jitter_outer, 
-                  smoothing_rate, gate_level, tilt_deg, landing_var, diagonal_feel);
+    // We ONLY process the left stick. Right stick (Mouse Aim) bypasses the CPU completely.
+    process_left_stick(h, lx, ly, 
+                       circ_error, jitter_mag, jitter_inner, jitter_outer, 
+                       smoothing_rate, gate_level, tilt_deg, landing_var, 
+                       diagonal_feel, anti_deadzone);
 }
