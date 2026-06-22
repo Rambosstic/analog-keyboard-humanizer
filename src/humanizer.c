@@ -1,5 +1,6 @@
 #include "humanizer.h"
 #include <stdlib.h>
+#include <math.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846f
@@ -14,28 +15,62 @@ void humanizer_init(Humanizer* h) {
     h->tilt_phase = 0.0f;
     h->gate_phase = 0.0f;
     
-    h->ema_lx = 0.0f; h->ema_ly = 0.0f;
-    h->ema_rx = 0.0f; h->ema_ry = 0.0f;
+    h->pos_lx = 0.0f; h->pos_ly = 0.0f;
+    h->vel_lx = 0.0f; h->vel_ly = 0.0f;
+    h->pos_rx = 0.0f; h->pos_ry = 0.0f;
+    h->vel_rx = 0.0f; h->vel_ry = 0.0f;
     
     h->was_active_l = false; h->land_offset_l = 0.0f;
     h->was_active_r = false; h->land_offset_r = 0.0f;
 }
 
-// Helper to process a single stick to avoid repeating code
-static void process_stick(Humanizer* h, int16_t* axis_x, int16_t* axis_y, float* ema_x, float* ema_y, 
+static void process_stick(Humanizer* h, int16_t* axis_x, int16_t* axis_y, 
+                          float* pos_x, float* pos_y, float* vel_x, float* vel_y,
                           bool* was_active, float* land_offset,
                           uint16_t circ_error, uint16_t jitter_mag, uint16_t jitter_inner, uint16_t jitter_outer, 
-                          uint16_t smoothing_rate, uint16_t gate_level, uint16_t tilt_deg, uint16_t landing_var) {
+                          uint16_t smoothing_rate, uint16_t gate_level, uint16_t tilt_deg, uint16_t landing_var, uint16_t diagonal_feel) {
     
-    // 1. Cartesian Smoothing (EMA) - Fixes the keyboard release "staircase"
-    float alpha = 1.0f - (smoothing_rate * 0.009f); // 0 = Instant (1.0), 100 = Heavy smooth (0.1)
-    if (alpha < 0.1f) alpha = 0.1f;
+    float tx = (float)(*axis_x);
+    float ty = (float)(*axis_y);
+
+    // 1. Axis Coupling (Diagonal Feel)
+    if (diagonal_feel > 0) {
+        float coupling = (diagonal_feel / 100.0f) * 0.30f; // Max 30% blend
+        float cx = tx;
+        float cy = ty;
+        // The presence of Y pulls X further in X's current direction
+        tx += coupling * cx * (fabsf(cy) / 32767.0f);
+        ty += coupling * cy * (fabsf(cx) / 32767.0f);
+    }
+
+    // 2. 2nd-Order Physics Smoothing (Inertia)
+    if (smoothing_rate == 0) {
+        // Zero lag, snap directly
+        *pos_x = tx;
+        *pos_y = ty;
+        *vel_x = 0.0f;
+        *vel_y = 0.0f;
+    } else {
+        // Map slider (1-100) to spring frequency in Hz (25Hz to 3Hz)
+        float freq_hz = 25.0f - (smoothing_rate * 0.22f); 
+        if (freq_hz < 3.0f) freq_hz = 3.0f; // Hard floor to prevent infinite float
+        
+        float w = TWO_PI * freq_hz;
+        float k = w * w;      // Spring stiffness
+        float c = 2.0f * w;   // Critical damping
+        float dt = 0.004f;    // 250Hz loop duration
+        
+        float force_x = k * (tx - *pos_x) - c * (*vel_x);
+        float force_y = k * (ty - *pos_y) - c * (*vel_y);
+        
+        *vel_x += force_x * dt;
+        *vel_y += force_y * dt;
+        *pos_x += (*vel_x) * dt;
+        *pos_y += (*vel_y) * dt;
+    }
     
-    *ema_x = (alpha * (float)(*axis_x)) + ((1.0f - alpha) * (*ema_x));
-    *ema_y = (alpha * (float)(*axis_y)) + ((1.0f - alpha) * (*ema_y));
-    
-    float x = *ema_x / 32767.0f;
-    float y = *ema_y / 32767.0f;
+    float x = *pos_x / 32767.0f;
+    float y = *pos_y / 32767.0f;
 
     float mag = sqrtf(x*x + y*y);
     float angle = atan2f(y, x);
@@ -44,47 +79,41 @@ static void process_stick(Humanizer* h, int16_t* axis_x, int16_t* axis_y, float*
     if (mag > 0.01f) {
         float deflection = (mag > 1.0f) ? 1.0f : mag; // 0.0 to 1.0
 
-        // 2. Landing Variation (Per-Press Dice Roll)
+        // 3. Landing Variation (Per-Press Dice Roll)
         if (landing_var > 0) {
-            if (!(*was_active) && mag > 0.05f) { // Engagement threshold
-                *land_offset = ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f; // -1.0 to 1.0
+            if (!(*was_active) && mag > 0.05f) { 
+                *land_offset = ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f; 
                 *was_active = true;
             }
             float land_deg_max = (landing_var / 100.0f) * 6.0f; 
             float land_rad = (*land_offset) * (land_deg_max * (float)M_PI / 180.0f);
-            angle += land_rad; // Apply the crooked dice roll
+            angle += land_rad; 
         }
         
-        // 3. Ergonomic Tilt (Wandering baseline)
+        // 4. Ergonomic Tilt (Wandering baseline)
         if (tilt_deg > 0) {
             float tilt_max = (tilt_deg / 100.0f) * 15.0f * (M_PI / 180.0f);
             angle += sinf(h->tilt_phase) * tilt_max;
         }
 
-        // 4. Dynamic Wobble (The 3-Slider Curve)
+        // 5. Dynamic Wobble (The 3-Slider Curve)
         if (jitter_mag > 0) {
             float max_wobble = (jitter_mag / 100.0f) * (6.0f * (M_PI / 180.0f));
             float inner = jitter_inner / 100.0f;
             float outer = jitter_outer / 100.0f;
             
-            // Linear interpolation curve based on stick deflection
             float curve = inner + (outer - inner) * deflection; 
-            
-            // Apply wobble scaled by the dynamic curve
             angle += sinf(h->wobble_phase) * max_wobble * curve;
         }
 
-        // 5. Circularity Error (Hardware Calibration Flaw)
-        // Applies a permanent, slightly square warp to the entire stick output
+        // 6. Circularity Error (Hardware Calibration Flaw)
         if (circ_error > 0) {
-            float circ = 1.0f + ((circ_error / 50.0f) * 0.15f * fabs(sinf(angle * 4.0f))); 
+            float circ = 1.0f + ((circ_error / 50.0f) * 0.15f * fabsf(sinf(angle * 4.0f))); 
             mag = mag * circ;
         }
 
-        // 6. Gate Slop (Outer-Ring Plastic Flex)
-        // ONLY applies when the stick is pushed hard against the plastic edge (>80% deflection)
+        // 7. Gate Slop (Outer-Ring Plastic Flex)
         if (gate_level > 0 && mag > 0.8f) { 
-            // Fade it in smoothly between 80% and 100% so it doesn't abruptly snap
             float edge_fade = (mag - 0.8f) / 0.2f; 
             if (edge_fade > 1.0f) edge_fade = 1.0f;
             
@@ -112,9 +141,9 @@ void humanizer_process(Humanizer* h, int16_t* lx, int16_t* ly, int16_t* rx, int1
                        uint16_t circ_error, 
                        uint16_t jitter_mag, uint16_t jitter_inner, uint16_t jitter_outer, 
                        uint16_t smoothing_rate, uint16_t gate_level,
-                       uint16_t tilt_deg, uint16_t landing_var, uint16_t passthrough) {
+                       uint16_t tilt_deg, uint16_t landing_var, uint16_t diagonal_feel, uint16_t passthrough) {
     
-    if (passthrough) return; // Killswitch
+    if (passthrough) return; 
 
     // Advance oscillators and wrap them to prevent float precision death
     h->wobble_phase += 0.4f; 
@@ -127,12 +156,14 @@ void humanizer_process(Humanizer* h, int16_t* lx, int16_t* ly, int16_t* rx, int1
     if (h->gate_phase > TWO_PI) h->gate_phase -= TWO_PI;
 
     // Process Left Stick
-    process_stick(h, lx, ly, &h->ema_lx, &h->ema_ly, &h->was_active_l, &h->land_offset_l,
+    process_stick(h, lx, ly, &h->pos_lx, &h->pos_ly, &h->vel_lx, &h->vel_ly, 
+                  &h->was_active_l, &h->land_offset_l,
                   circ_error, jitter_mag, jitter_inner, jitter_outer, 
-                  smoothing_rate, gate_level, tilt_deg, landing_var);
+                  smoothing_rate, gate_level, tilt_deg, landing_var, diagonal_feel);
 
-    // Process Right Stick (optional depending on your target, but safe to run)
-    process_stick(h, rx, ry, &h->ema_rx, &h->ema_ry, &h->was_active_r, &h->land_offset_r,
+    // Process Right Stick 
+    process_stick(h, rx, ry, &h->pos_rx, &h->pos_ry, &h->vel_rx, &h->vel_ry, 
+                  &h->was_active_r, &h->land_offset_r,
                   circ_error, jitter_mag, jitter_inner, jitter_outer, 
-                  smoothing_rate, gate_level, tilt_deg, landing_var);
+                  smoothing_rate, gate_level, tilt_deg, landing_var, diagonal_feel);
 }
