@@ -249,8 +249,8 @@ int main(void) {
                     watchdog_hw->scratch[0] = 0;
                     watchdog_reboot(0, 0, 10);
                     while(1);
-                }
             }
+        }
         } else {
             uint32_t current_time_us = time_us_32();
             if (current_time_us - last_math_tick_us >= 4000) {
