@@ -25,17 +25,17 @@ void humanizer_init(Humanizer* h) {
 
 static void process_left_stick(Humanizer* h, int16_t* axis_x, int16_t* axis_y, 
                           uint16_t circ_error, uint16_t jitter_mag, uint16_t jitter_inner, uint16_t jitter_outer, 
-                          uint16_t smoothing_rate, uint16_t gate_level, uint16_t tilt_deg, 
+                          uint16_t smoothing_rate, uint16_t gate_level, uint16_t variance_level, int16_t ergo_tilt, 
                           uint16_t landing_var, uint16_t diagonal_feel, uint16_t anti_deadzone) {
     
-    // --- BACKGROUND STOCHASTIC PINK NOISE (ALWAYS RUNNING) ---
+    // --- BACKGROUND STOCHASTIC PINK NOISE (Boosted for actual output) ---
     float noise_tremor = ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f;
     float noise_tilt   = ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f;
     float noise_gate   = ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f;
 
-    h->tremor_state = (h->tremor_state * 0.90f) + (noise_tremor * 0.10f); 
-    h->tilt_state   = (h->tilt_state * 0.995f) + (noise_tilt * 0.005f);   
-    h->gate_state   = (h->gate_state * 0.95f) + (noise_gate * 0.05f); 
+    h->tremor_state = clamp_abs((h->tremor_state * 0.90f) + (noise_tremor * 0.25f), 1.0f); 
+    h->tilt_state   = clamp_abs((h->tilt_state * 0.995f) + (noise_tilt * 0.05f), 1.0f);   
+    h->gate_state   = clamp_abs((h->gate_state * 0.95f) + (noise_gate * 0.15f), 1.0f); 
 
     // Normalize input
     float tx = (float)(*axis_x) / 32767.0f;
@@ -106,8 +106,12 @@ static void process_left_stick(Humanizer* h, int16_t* axis_x, int16_t* axis_y,
     float angle = atan2f(y, x);
 
     if (mag > 0.01f) {
-        if (mag > 1.0f) mag = 1.0f; 
-        float deflection = mag;
+        // --- FIXED: Circle to Square Boundary ---
+        float square_max = 1.0f / fmaxf(fabsf(cosf(angle)), fabsf(sinf(angle)));
+        float allowed_max = 1.0f + (square_max - 1.0f) * (circ_error / 50.0f);
+        if (mag > allowed_max) mag = allowed_max;
+        
+        float deflection = mag > 1.0f ? 1.0f : mag; // Keep at 1.0 for wobble math
 
         // 6. Landing Variation
         if (landing_var > 0) {
@@ -120,10 +124,10 @@ static void process_left_stick(Humanizer* h, int16_t* axis_x, int16_t* axis_y,
             angle += land_rad; 
         }
         
-        // 7. Ergonomic Tilt
-        if (tilt_deg > 0) {
-            float tilt_max = (tilt_deg / 100.0f) * 15.0f * (M_PI / 180.0f);
-            angle += (h->tilt_state) * tilt_max * deflection;
+        // 7. Steady Stick Deflection Variance
+        if (variance_level > 0) {
+            float variance_max = (variance_level / 100.0f) * 15.0f * (M_PI / 180.0f);
+            angle += (h->tilt_state) * variance_max * deflection;
         }
 
         // 8. Dynamic Wobble
@@ -143,6 +147,11 @@ static void process_left_stick(Humanizer* h, int16_t* axis_x, int16_t* axis_y,
             mag += (slop * edge_fade);
         }
 
+        // 10. Ergonomic Tilt (True Static Rotation)
+        if (ergo_tilt != 0) {
+            angle += ergo_tilt * (M_PI / 180.0f);
+        }
+
         x = cosf(angle) * mag;
         y = sinf(angle) * mag;
     } else {
@@ -159,7 +168,7 @@ static void process_left_stick(Humanizer* h, int16_t* axis_x, int16_t* axis_y,
 
 void humanizer_process(Humanizer* h, int16_t* lx, int16_t* ly, int16_t* rx, int16_t* ry,
                        uint16_t circ_error, uint16_t jitter_mag, uint16_t jitter_inner, uint16_t jitter_outer, 
-                       uint16_t smoothing_rate, uint16_t gate_level, uint16_t tilt_deg, uint16_t landing_var, 
+                       uint16_t smoothing_rate, uint16_t gate_level, uint16_t variance_level, int16_t ergo_tilt, uint16_t landing_var, 
                        uint16_t diagonal_feel, uint16_t anti_deadzone, uint16_t passthrough) {
     
     if (passthrough) return; 
@@ -167,6 +176,6 @@ void humanizer_process(Humanizer* h, int16_t* lx, int16_t* ly, int16_t* rx, int1
     // We ONLY process the left stick. Right stick (Mouse Aim) bypasses the CPU completely.
     process_left_stick(h, lx, ly, 
                        circ_error, jitter_mag, jitter_inner, jitter_outer, 
-                       smoothing_rate, gate_level, tilt_deg, landing_var, 
+                       smoothing_rate, gate_level, variance_level, ergo_tilt, landing_var, 
                        diagonal_feel, anti_deadzone);
 }
