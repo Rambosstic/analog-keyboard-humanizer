@@ -5,10 +5,15 @@
 #include <stdbool.h>
 
 typedef struct {
-    // We now use TWO independent waves for realistic 2D wandering
+    // Current positions of the wandering thumb
     float drift_x;
     float drift_y;
     float gate_state;
+    
+    // The target destinations the thumb is gliding toward
+    float target_x;
+    float target_y;
+    float target_gate;
     
     // 2nd-Order Physics State Variables
     float pos_lx, pos_ly;
