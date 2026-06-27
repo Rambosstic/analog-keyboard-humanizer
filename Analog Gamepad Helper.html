@@ -288,7 +288,7 @@
             <span class="control-name">Circularity</span>
             <span class="chip" id="circ_v">3</span>
         </div>
-        <p class="control-desc">Rounds perfect diagonals back onto the circular output expected from a physical thumbstick. Keep it low unless your game expects a squarer range.</p>
+        <p class="control-desc">Forces more circularity, Higher Values output more square shape.</p>
         <div class="track-wrap">
             <span class="rec-tick" style="left:6%"></span>
             <input type="range" id="circ" min="0" max="50" value="3">
@@ -311,7 +311,7 @@
 
     <div class="control">
         <div class="control-top">
-            <span class="control-name">Instant actuation</span>
+            <span class="control-name">Instant actuation/Anti-Deadzone</span>
             <span class="chip" id="anti_v">5</span>
         </div>
         <p class="control-desc">Nudges your input past the physical center deadzone so the game responds the moment a key begins depressing.</p>
@@ -342,7 +342,7 @@
     <div class="group">
         <p class="group-title">Dynamic Axis Drift</p>
         
-        <p class="control-desc" style="margin-top:-10px; margin-bottom: 16px;">Applies a slow, organic wave to your output angle to mathematically break perfect X/Y axis lines.</p>
+        <p class="control-desc" style="margin-top:-10px; margin-bottom: 16px;">Applies a slow, organic wave to your output angle emulating a thumb on a stick toward a single axis</p>
 
         <div class="control">
             <div class="control-top">
@@ -376,7 +376,7 @@
             <span class="control-name">Gate slip</span>
             <span class="chip" id="gate_slip_v">50</span>
         </div>
-        <p class="control-desc">Fakes a thumb losing traction. Randomly drops magnitude up to 3% only while a key is fully bottomed out.</p>
+        <p class="control-desc">Emulates a thumb minutely traveling back toward center stick at full deflection. Drops magnitude up to 3% only while a key is fully bottomed out.</p>
         <div class="track-wrap">
             <span class="rec-tick" style="left:50%"></span>
             <input type="range" id="gate_slip" min="0" max="100" value="50">
@@ -386,10 +386,10 @@
 
     <div class="control">
         <div class="control-top">
-            <span class="control-name">Initial stride offset</span>
+            <span class="control-name">Initial axis offset</span>
             <span class="chip" id="landing_v">2</span>
         </div>
-        <p class="control-desc">Controls the maximum angle deviation applied to the start of a footstep. Higher values create a wider cone of randomness.</p>
+        <p class="control-desc">Controls the maximum angle deviation applied to the start of each new key press. Higher values create a wider cone of intital offset.</p>
         <div class="track-wrap">
             <span class="rec-tick" style="left:33%"></span>
             <input type="range" id="landing" min="0" max="6" value="2">
