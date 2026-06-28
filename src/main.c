@@ -22,7 +22,7 @@ bool tud_in_config_mode(void);
 
 #define USB_HOST_PWR_PIN 18
 #define CONFIG_MAGIC_NUM 0x1A2B3C4D 
-#define FLASH_MAGIC_KEY 0x48554D52 // Updated key to force clean flash overwrite
+#define FLASH_MAGIC_KEY 0x48554D53 // Bumped up by 1 to force clean flash overwrite
 #define FLASH_TARGET_OFFSET (1024 * 1024) 
 
 typedef struct {
@@ -35,6 +35,8 @@ typedef struct {
     uint16_t gate_slip;       
     uint16_t landing_var;     
     uint16_t passthrough;     
+    uint16_t stride_weight;   
+    uint16_t stride_shape;    
 } humanizer_config_t;
 
 static humanizer_config_t active_config;
@@ -69,6 +71,8 @@ void load_settings_from_flash(void) {
         active_config.gate_slip      = 50;  
         active_config.landing_var    = 2;
         active_config.passthrough    = 0;
+        active_config.stride_weight  = 10;
+        active_config.stride_shape   = 50;
     }
 }
 
@@ -91,9 +95,9 @@ void process_web_serial_commands(void) {
         
         // --- 1. INSTANT RAM UPDATE (No Reboot) ---
         if (strncmp(buffer, "LIVE:", 5) == 0) {
-            int c, s, ad, wd, sd, gs, l, p;
-            if (sscanf(buffer, "LIVE:%d,%d,%d,%d,%d,%d,%d,%d", 
-                       &c, &s, &ad, &wd, &sd, &gs, &l, &p) == 8) {
+            int c, s, ad, wd, sd, gs, l, sw, sh, p;
+            if (sscanf(buffer, "LIVE:%d,%d,%d,%d,%d,%d,%d,%d,%d,%d", 
+                       &c, &s, &ad, &wd, &sd, &gs, &l, &sw, &sh, &p) == 10) {
                 // Update the active configuration in RAM instantly
                 active_config.circ_error     = (uint16_t)c;
                 active_config.smoothing_rate = (uint16_t)s;
@@ -102,6 +106,8 @@ void process_web_serial_commands(void) {
                 active_config.sprint_drift   = (uint16_t)sd;
                 active_config.gate_slip      = (uint16_t)gs;
                 active_config.landing_var    = (uint16_t)l;
+                active_config.stride_weight  = (uint16_t)sw;
+                active_config.stride_shape   = (uint16_t)sh;
                 active_config.passthrough    = (uint16_t)p;
             }
         }
@@ -122,7 +128,6 @@ void process_web_serial_commands(void) {
         }
     }
 }
-
 
 void core1_main(void) {
     gpio_init(USB_HOST_PWR_PIN);
@@ -221,7 +226,8 @@ int main(void) {
                                   active_config.anti_deadzone,
                                   active_config.walk_drift, active_config.sprint_drift,
                                   active_config.gate_slip, active_config.landing_var,
-                                  active_config.passthrough);
+                                  active_config.passthrough,
+                                  active_config.stride_weight, active_config.stride_shape);
                                   
                 preview_lx = lx; preview_ly = ly;
             }
@@ -259,7 +265,8 @@ int main(void) {
                                   active_config.anti_deadzone,
                                   active_config.walk_drift, active_config.sprint_drift,
                                   active_config.gate_slip, active_config.landing_var,
-                                  active_config.passthrough);
+                                  active_config.passthrough,
+                                  active_config.stride_weight, active_config.stride_shape);
 
                 current_report[0] = 0x00; current_report[1] = 0x14;
                 current_report[2] = btns & 0xFF; current_report[3] = (btns >> 8) & 0xFF;
