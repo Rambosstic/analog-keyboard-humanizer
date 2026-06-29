@@ -30,8 +30,7 @@ void humanizer_init(Humanizer* h) {
 static void process_left_stick(Humanizer* h, int16_t* axis_x, int16_t* axis_y, 
                           uint16_t circ_error, uint16_t smoothing_rate, uint16_t anti_deadzone, 
                           uint16_t walk_drift, uint16_t sprint_drift, 
-                          uint16_t gate_slip, uint16_t landing_var,
-                          uint16_t stride_weight, uint16_t stride_shape) {
+                          uint16_t gate_slip, uint16_t landing_var) {
     
     // Normalize Input
     float tx = (float)(*axis_x) / 32767.0f;
@@ -72,31 +71,25 @@ static void process_left_stick(Humanizer* h, int16_t* axis_x, int16_t* axis_y,
 
     if (target_mag > 0.01f) {
         
-        float deflection = target_mag > 1.0f ? 1.0f : target_mag; 
+        // ** THE DIAGONAL FIX **
+        // Replaces the flawed hypotenuse math with max absolute switch depth
+        float deflection = fmaxf(fabsf(tx), fabsf(ty)); 
 
-        // A. Initial Stride Offset (The Customizable Sweeping Arc)
+        // A. Initial Stride Offset (The Sweeping Arc)
         if (!(h->was_active_l)) { 
             h->land_offset_l = ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f; 
             h->stride_state = 0.0f; // Reset the pivot state
             h->was_active_l = true;
         }
 
-        // The Weight (Dynamic EMA Rate)
-        float weight_add = (float)stride_weight / 100.0f;
-        if (weight_add < 0.01f) weight_add = 0.01f; 
-        float weight_keep = 1.0f - weight_add;
-        
         // The EMA smoothly rolls the stride state toward the target offset
-        h->stride_state = (h->stride_state * weight_keep) + (h->land_offset_l * weight_add);
+        h->stride_state = (h->stride_state * 0.90f) + (h->land_offset_l * 0.10f);
 
         float safe_land_deg = (landing_var > 10) ? (landing_var / 100.0f) * 6.0f : (float)landing_var;
         float stride_max = safe_land_deg * (M_PI / 180.0f);
         
-        // The Shape (Dynamic Power Curve)
-        float custom_arc_shape = (float)stride_shape / 50.0f; 
-        if (custom_arc_shape < 0.1f) custom_arc_shape = 0.1f; 
-        
-        target_angle += (h->stride_state) * stride_max * powf(deflection, custom_arc_shape); 
+        // The angle perfectly scales with physical switch deflection 
+        target_angle += (h->stride_state) * stride_max * deflection; 
 
         // B. Gate Slip 
         if (gate_slip > 0 && target_mag > 0.99f) { 
@@ -172,13 +165,11 @@ static void process_left_stick(Humanizer* h, int16_t* axis_x, int16_t* axis_y,
 void humanizer_process(Humanizer* h, int16_t* lx, int16_t* ly, int16_t* rx, int16_t* ry,
                        uint16_t circ_error, uint16_t smoothing_rate, uint16_t anti_deadzone, 
                        uint16_t walk_drift, uint16_t sprint_drift, 
-                       uint16_t gate_slip, uint16_t landing_var, uint16_t passthrough,
-                       uint16_t stride_weight, uint16_t stride_shape) {
+                       uint16_t gate_slip, uint16_t landing_var, uint16_t passthrough) {
     
     if (passthrough) return; 
 
     process_left_stick(h, lx, ly, 
                        circ_error, smoothing_rate, anti_deadzone, 
-                       walk_drift, sprint_drift, gate_slip, landing_var,
-                       stride_weight, stride_shape);
+                       walk_drift, sprint_drift, gate_slip, landing_var);
 }
