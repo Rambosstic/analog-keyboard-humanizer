@@ -37,8 +37,6 @@ static void process_left_stick(Humanizer* h, int16_t* axis_x, int16_t* axis_y,
     float ty = (float)(*axis_y) / 32767.0f;
 
     // ** BUG FIX 1: THE FMAX PULSE **
-    // The user was completely right: fmaxf created a square map that shrank the deflection
-    // by 30% at the diagonals, causing a 4-point pinch when rolling in a circle. 
     // We now use true radial magnitude clamped to 1.0 for a perfectly smooth 360 sweep.
     float input_deflection = fminf(sqrtf(tx*tx + ty*ty), 1.0f);
 
@@ -90,8 +88,10 @@ static void process_left_stick(Humanizer* h, int16_t* axis_x, int16_t* axis_y,
         float safe_land_deg = (landing_var > 10) ? (landing_var / 100.0f) * 6.0f : (float)landing_var;
         float stride_max = safe_land_deg * (M_PI / 180.0f);
         
-        // Use the smooth input_deflection so the arc doesn't shrink on diagonals
-        target_angle += (h->stride_state) * stride_max * input_deflection; 
+        // ** FIX 1: UNTETHERED STRIDE **
+        // Removed the input_deflection scalar. The angle shift is now applied purely,
+        // stopping the violent lateral velocity jumps during partial analog key transitions.
+        target_angle += (h->stride_state) * stride_max; 
 
         // B. Gate Slip 
         if (gate_slip > 0 && target_mag > 0.99f) { 
@@ -110,11 +110,14 @@ static void process_left_stick(Humanizer* h, int16_t* axis_x, int16_t* axis_y,
             float current_drift_deg = (float)walk_drift + ((float)sprint_drift - (float)walk_drift) * input_deflection;
             float drift_scale = current_drift_deg * (M_PI / 180.0f);
             
-            // Multiplied by deflection to prevent center snap / wiper effect
-            tx += h->drift_x * (drift_scale * input_deflection);
-            ty += h->drift_y * (drift_scale * input_deflection);
+            // ** FIX 2: PROPER DRIFT SCALING **
+            // Scale the cartesian displacement by the ACTUAL pre_drift_mag to prevent the center-wiper effect
+            // without double-dipping into input_deflection.
+            float cartesian_offset = pre_drift_mag * drift_scale;
+            tx += h->drift_x * cartesian_offset;
+            ty += h->drift_y * cartesian_offset;
             
-            // ** BUG FIX 2: STRICT DRIFT LOCK **
+            // ** STRICT DRIFT LOCK **
             // Completely forbid drift from altering the magnitude in ANY direction.
             // This stops Cartesian drift from artificially swelling light key presses.
             float post_drift_mag = sqrtf(tx*tx + ty*ty);
@@ -155,10 +158,9 @@ static void process_left_stick(Humanizer* h, int16_t* axis_x, int16_t* axis_y,
         float force_x = k * (tx - h->pos_lx) - c * (h->vel_lx);
         float force_y = k * (ty - h->pos_ly) - c * (h->vel_ly);
         
-        // Gyroscopic Damping (Bends straight inertia chords into curves)
-        float c_perp = c * h->stride_state * 0.35f; 
-        force_x += -h->vel_ly * c_perp;
-        force_y += h->vel_lx * c_perp;
+        // ** FIX 3: GYROSCOPIC DAMPING DELETED **
+        // Removed the perpendicular velocity math. The spring will no longer 'slingshot' 
+        // during light analog presses or multi-key transitions.
         
         h->vel_lx += force_x * dt; h->vel_ly += force_y * dt;
         h->pos_lx += (h->vel_lx) * dt; h->pos_ly += (h->vel_ly) * dt;
